@@ -11,7 +11,7 @@ load_dotenv()
 # -------- MODEL --------
 model = ChatOpenAI(
     base_url="https://openrouter.ai/api/v1",
-    api_key="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",
+    api_key=os.getenv("hf"),
     model="mistralai/mistral-7b-instruct:free"
 )
 
@@ -107,3 +107,4 @@ if st.button("Analyze Review"):
 
         st.subheader("💬 AI Response")
         st.write(result.get("response"))
+
