@@ -3,16 +3,21 @@ from langgraph.graph import StateGraph, START, END
 from langchain_openai import ChatOpenAI
 from typing import TypedDict, Literal
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 import os
 
+# Load .env file
 load_dotenv()
 
 # -------- MODEL --------
 model = ChatOpenAI(
     base_url="https://openrouter.ai/api/v1",
     api_key=os.getenv("hf"),
-    model="mistralai/mistral-7b-instruct:free"
+    model="mistralai/mistral-7b-instruct:free",
+    default_headers={
+        "HTTP-Referer": "http://localhost",      # Required by OpenRouter
+        "X-Title": "Review Analyzer App"
+    }
 )
 
 # -------- SCHEMAS --------
@@ -32,7 +37,7 @@ class ReviewState(TypedDict):
 
 # -------- WORKFLOW STEPS --------
 def find_sentiment(state: ReviewState):
-    prompt = f"Tell me the sentiment (positive or negative) of the following review:\n\n{state['review']}"
+    prompt = f"Tell me the sentiment (positive or negative) of this review:\n\n{state['review']}"
     structured = model.with_structured_output(SentimentSchema)
     result = structured.invoke(prompt)
     return {"sentiment": result.sentiment}
@@ -41,13 +46,13 @@ def check_sentiment(state: ReviewState):
     return "positive_response" if state["sentiment"] == "positive" else "run_diagnosis"
 
 def positive_response(state: ReviewState):
-    prompt = f"Reply to this feedback in a warm and thankful tone:\n\n{state['review']}"
+    prompt = f"Reply to this feedback warmly and appreciatively:\n\n{state['review']}"
     output = model.invoke(prompt).content
     return {"response": output}
 
 def run_diagnosis(state: ReviewState):
     prompt = (
-        "Diagnose the negative feedback and return issue_type, tone, and urgency.\n\n"
+        "Analyze the negative feedback and return issue_type, tone, and urgency.\n\n"
         f"feedback: {state['review']}"
     )
     structured = model.with_structured_output(DiagnosisSchema)
@@ -57,9 +62,12 @@ def run_diagnosis(state: ReviewState):
 def negative_response(state: ReviewState):
     diagnosis = state["diagnosis"]
     prompt = f"""
-You are a  support assistant.
-The user had a '{diagnosis['issue_type']}' issue, sounded '{diagnosis['tone']}', and marked urgency as '{diagnosis['urgency']}'.
-Write an empathetic, helpful response and also say thank you in the end not some user fill regards or anything.
+You are a support assistant.
+
+The user had a '{diagnosis['issue_type']}' issue, sounded '{diagnosis['tone']}', and marked the urgency as '{diagnosis['urgency']}'.
+
+Write an empathetic and helpful response. 
+Say "thank you" at the end. Avoid signature lines.
 """
     result = model.invoke(prompt).content
     return {"response": result}
@@ -81,10 +89,8 @@ workflow = graph.compile()
 
 # -------- STREAMLIT UI --------
 st.set_page_config(page_title="Review Analyzer", layout="centered")
-
-st.title("📝 FeedBack Analyzer and Reply  (Diagnostics)")
-
-st.write("Paste a user review below and let AI analyze it!")
+st.title("📝 Feedback Analyzer + AI Reply Generator")
+st.write("Paste a user review below and let the AI analyze and respond!")
 
 review_input = st.text_area("Enter Review:", height=200)
 
@@ -98,13 +104,18 @@ if st.button("Analyze Review"):
 
         st.success("Analysis Complete!")
 
+        # Sentiment
         st.subheader("📌 Sentiment")
         st.write(result.get("sentiment", "-"))
 
+        # Diagnosis (only for negative reviews)
         if result.get("sentiment") == "negative":
+            diagnosis = result.get("diagnosis", {})
             st.subheader("🛠 Diagnosis")
-            st.json(result.get("diagnosis"))
+            st.markdown(f"**Issue Type:** {diagnosis.get('issue_type', '-')}")
+            st.markdown(f"**Tone:** {diagnosis.get('tone', '-')}")
+            st.markdown(f"**Urgency:** {diagnosis.get('urgency', '-')}")
 
+        # Final Response
         st.subheader("💬 AI Response")
         st.write(result.get("response"))
-
